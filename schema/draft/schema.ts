@@ -452,6 +452,33 @@ export interface ServerCapabilities {
       };
     };
   };
+  /**
+   * Present if the server offers any entities to manage.
+   */
+  entities?: {
+    /**
+     * The global query capabilities of the server for entities.
+     */
+    query?: ServerEntityQueryCapabilities;
+  };
+}
+
+/**
+ * Defines the global query capabilities of the server for entities.
+ *
+ * @category `initialize`
+ */
+export interface ServerEntityQueryCapabilities {
+  /**
+   * A list of the query languages supported by the server for entity searches.
+   * Common values include "sql", "esql", "promql", "elasticsearch_query_dsl".
+   */
+  supportedLanguages: string[];
+  /**
+   * The default query language to be used if the client does not specify one.
+   * This MUST be one of the values from `supportedLanguages`.
+   */
+  defaultLanguage: string;
 }
 
 /**
@@ -1494,6 +1521,268 @@ export interface TaskStatusNotification extends JSONRPCNotification {
   params: TaskStatusNotificationParams;
 }
 
+/* Entities */
+/**
+ * Sent from the client to request a list of entity types the server has.
+ *
+ * @category `entities/schema`
+ */
+export interface ListEntitySchemasRequest extends PaginatedRequest {
+  method: "entities/schema";
+}
+
+/**
+ * The server's response to a entities/schema request from the client.
+ *
+ * @category `entities/schema`
+ */
+export interface ListEntitySchemasResult extends PaginatedResult {
+  entityTypes: EntityType[];
+}
+
+/**
+ * A known entity type that the server is capable of managing.
+ *
+ * @category `entities/schema`
+ */
+export interface EntityType extends BaseMetadata, Icons {
+  /**
+   * A description of what this entity represents.
+   *
+   * This can be used by clients to improve the LLM's understanding of available entities. It can be thought of like a "hint" to the model.
+   */
+  description?: string;
+
+  /**
+   * A JSON Schema object defining the expected parameters for the entity type.
+   */
+  schema: EntityTypeSchema;
+
+  /**
+   * A list of tags for categorization and discovery.
+   */
+  tags?: string[];
+
+  /**
+   * See [General fields: `_meta`](/specification/draft/basic/index#meta) for notes on `_meta` usage.
+   */
+  _meta?: { [key: string]: unknown };
+}
+
+/**
+ * A JSON Schema object defining the expected parameters for the entity type.
+ *
+ * @category `entities/schema`
+ */
+export interface EntityTypeSchema {
+  $schema?: string;
+  type: "object";
+  properties?: { [key: string]: EntityPropertySchema };
+  required?: string[];
+}
+
+/**
+ * Describes a single property within an EntityTypeSchema, including
+ * standard JSON schema attributes, and custom MCP capabilities.
+ *
+ * @category `entities/schema`
+ */
+export interface EntityPropertySchema {
+  // Standard JSON Schema properties
+  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  description?: string;
+  format?: string;
+  enum?: (string | number)[];
+
+  /**
+   * A human-friendly name for the field.
+   */
+  displayName?: string;
+  /**
+   * A list of example values to provide contextual clues to the LLM.
+   */
+  exampleValues?: (string | number)[];
+  /**
+   * The unit of measurement for a numerical value (e.g., "ms", "bytes").
+   */
+  unit?: string;
+  /**
+   * Indicates that this field should typically be hidden from user-facing displays.
+   */
+  isHidden?: boolean;
+  /**
+   * Indicates that this field is the primary display label for the entity.
+   */
+  isPrimaryDisplayField?: boolean;
+  /**
+   * The property can be used in structured filters (e.g., `WHERE is_active = true`).
+   */
+  filterable?: boolean;
+  /**
+   * The property is indexed for full-text search (e.g., `WHERE content LIKE '%text%'`).
+   */
+  searchable?: boolean;
+  /**
+   * The property can be used for sorting results (e.g., `ORDER BY last_updated`).
+   */
+  sortable?: boolean;
+}
+
+/**
+ * Parameters for a `entities/read` request.
+ *
+ * @category `entities/read`
+ */
+export interface ReadEntityRequestParams extends RequestParams {
+  /**
+   * The name of the entity type.
+   */
+  entityType: string;
+  /**
+   * The ID of the entity.
+   */
+  entityId: string;
+}
+
+/**
+ * Sent from the client to the server, to read a specific entity.
+ *
+ * @category `entities/read`
+ */
+export interface ReadEntityRequest extends JSONRPCRequest {
+  method: "entities/read";
+  params: ReadEntityRequestParams;
+}
+
+/**
+ * The server's response to a entities/read request from the client.
+ *
+ * @category `entities/read`
+ */
+export interface ReadEntityResult extends Result {
+  /**
+   * The name of the entity type.
+   */
+  entityType: string;
+  /**
+   * The ID of the entity.
+   */
+  entityId: string;
+  /**
+   * The entity data.
+   */
+  data: { [key: string]: unknown };
+}
+ 
+/**
+ * Parameters for a `entities/query` request.
+ *
+ * @category `entities/query`
+ */
+export interface QueryEntitiesRequestParams extends PaginatedRequestParams {
+  /**
+   * The search query. The structure (string or object) depends on the
+   * language used. For example, SQL and PromQL are typically strings, while
+   * Elasticsearch Query DSL is an object.
+   */
+  query?: string | object;
+  /**
+   * The query language to use for this search. If omitted, the entity type's
+   * default language is assumed. This MUST be one of the languages supported
+   * by the entity type.
+   */
+  language?: string;
+}
+/**
+ * Sent from the client to the server, to query for entities.
+ *
+ * @category `entities/query`
+ */
+export interface QueryEntitiesRequest extends JSONRPCRequest {
+  method: "entities/query";
+  params: QueryEntitiesRequestParams;
+}
+
+
+
+/**
+ * The server's response to a entities/query request from the client.
+ * This is a discriminated union based on the `format` property.
+ *
+ * @category `entities/query`
+ */
+export type QueryEntitiesResult = EntityListResult | TabularResult;
+
+/**
+ * A single entity result, including query-specific metadata.
+ *
+ * @category `entities/query`
+ */
+export interface EntityQueryResult {
+  /**
+   * The name of the entity type.
+   */
+  entityType: string;
+  /**
+   * The ID of the entity.
+   */
+  entityId: string;
+
+  /**
+   * The entity data.
+   */
+  data: { [key: string]: unknown };
+
+  /**
+   * A relevance score assigned by the query engine, typically between 0.0 and 1.0.
+   * Higher values indicate a better match. This is particularly useful when
+   * the query involves full-text search or reranking.
+   */
+  score?: number;
+}
+
+/**
+ * A search result that is a list of full entity objects.
+ *
+ * @category `entities/query`
+ */
+export interface EntityListResult extends Result {
+  /**
+   * The format of the result, used for discriminating the union type.
+   */
+  format: "entityList";
+  /**
+   * The total number of entities that matched the query.
+   */
+  totalCount?: number;
+  /**
+   * The search results for the current page.
+   */
+  results: EntityQueryResult[];
+}
+
+/**
+ * A search result that is a generic table of rows and columns, typically
+ * from an aggregation or projection query.
+ *
+ * @category `entities/query`
+ */
+export interface TabularResult extends Result {
+  /**
+   * The format of the result, used for discriminating the union type.
+   */
+  format: "tabular";
+  /**
+   * An array of strings representing the column names of the result set.
+   */
+  columns: string[];
+  /**
+   * The result set, represented as an array of rows. Each row is an array
+   * of primitive values corresponding to the `columns`.
+   */
+  rows: (string | number | boolean | null)[][];
+}
+
 /* Logging */
 
 /**
@@ -2512,6 +2801,9 @@ export type ClientRequest =
   | UnsubscribeRequest
   | CallToolRequest
   | ListToolsRequest
+  | ListEntitySchemasRequest
+  | ReadEntityRequest
+  | QueryEntitiesRequest
   | GetTaskRequest
   | GetTaskPayloadRequest
   | ListTasksRequest
@@ -2572,6 +2864,9 @@ export type ServerResult =
   | ReadResourceResult
   | CallToolResult
   | ListToolsResult
+  | ListEntitySchemasResult
+  | ReadEntityResult
+  | QueryEntitiesResult
   | GetTaskResult
   | GetTaskPayloadResult
   | ListTasksResult
